@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "celigo": {
+      "type": "http",
+      "url": "https://api.integrator.io/celigo-mcp"
+    }
+  }
+}
