@@ -1,0 +1,24 @@
+{
+  "name": "celigo-cli-fork",
+  "version": "2026.8.6",
+  "description": "Fork of @celigo/celigo-cli — command-line interface for the integrator.io platform, extended for internal use",
+  "type": "module",
+  "bin": {
+    "celigo": "./bin/celigo.js"
+  },
+  "scripts": {
+    "start": "node bin/celigo.js"
+  },
+  "author": "Celigo, Inc. (upstream); forked and extended internally",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@vercel/detect-agent": "1.2.3",
+    "chalk": "6.0.0",
+    "commander": "14.0.3",
+    "node-jq": "6.3.1",
+    "undici": "7.29.0"
+  }
+}
