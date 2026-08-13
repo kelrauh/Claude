@@ -13,9 +13,30 @@ in this repo is that shipped bundle (version `2026.8.6`), taken as the starting 
 under the terms of its MIT license (see `LICENSE`). The original package README is preserved as
 `CELIGO-CLI-UPSTREAM-README.md` for reference.
 
-Because the bundle is a single file rather than clean per-module source, treat it as a legacy
-baseline: pull individual commands out into `src/commands/*.js` as you touch them, rather than
-trying to re-split the whole file up front.
+Because the bundle is a single file rather than clean per-module source, the layout is:
+
+- `src/lib/core.js` — the shared framework the upstream bundle built every command on: config,
+  auth/profiles, the HTTP client, output formatting/projection, help text, and the generic
+  resource-CRUD factory (`makeResourceGroup`) that most commands are built from.
+- `src/commands/*.js` — individual commands pulled out of the bundle as thin modules that import
+  what they need from `core.js`. Only `users.js` has been pulled out so far; the rest of the
+  commands (flows, connections, exports, etc.) still live inline in `bin/celigo.js` and can be
+  extracted the same way as they're touched.
+- `bin/celigo.js` — the CLI entry point: everything not yet pulled into `src/commands/`, plus the
+  final `program` wiring.
+
+Every extraction so far has been verified against the original bundle (`--help` output for every
+command diffs byte-identical, and error paths like missing-token match too) — see git history for
+the extraction methodology if you're pulling out another command.
+
+Two behavioral changes from upstream, both in `src/lib/core.js`:
+- `autoUpdate()` is disabled (early return). Upstream's version would periodically shell out to
+  `npm install -g @celigo/celigo-cli@latest` — reinstalling the *original* package over this fork,
+  which is actively wrong for a fork. Worth designing a real auto-update story later if this fork
+  needs one, pointed at wherever this package actually gets published/distributed.
+- The `pkg.json` path used to read the CLI's own version was relative to the entry file's location
+  (one directory up) — fixed to account for `core.js` now living two directories deep
+  (`src/lib/`) instead of one (`bin/`, upstream's `dist/`).
 
 ## Usage
 
