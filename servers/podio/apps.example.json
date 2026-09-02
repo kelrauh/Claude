@@ -1,0 +1,10 @@
+{
+  "deals": {
+    "app_id": "123456789",
+    "app_token": "abcdef0123456789"
+  },
+  "leads": {
+    "app_id": "987654321",
+    "app_token": "fedcba9876543210"
+  }
+}

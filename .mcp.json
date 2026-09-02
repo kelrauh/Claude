@@ -5,8 +5,14 @@
       "url": "https://api.integrator.io/celigo-mcp"
     },
     "podio": {
-      "type": "http",
-      "url": "https://mcp.podio.com/mcp"
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--script", "servers/podio/podio_mcp.py"],
+      "env": {
+        "PODIO_CLIENT_ID": "${PODIO_CLIENT_ID}",
+        "PODIO_CLIENT_SECRET": "${PODIO_CLIENT_SECRET}",
+        "PODIO_APPS": "${PODIO_APPS}"
+      }
     }
   }
 }
