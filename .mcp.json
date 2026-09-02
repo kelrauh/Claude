@@ -3,6 +3,10 @@
     "celigo": {
       "type": "http",
       "url": "https://api.integrator.io/celigo-mcp"
+    },
+    "podio": {
+      "type": "http",
+      "url": "https://mcp.podio.com/mcp"
     }
   }
 }
