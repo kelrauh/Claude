@@ -85,7 +85,7 @@ def test_load_config_requires_credentials():
 
 
 def test_load_config_requires_at_least_one_app():
-    with pytest.raises(PodioConfigError, match="No Podio apps configured"):
+    with pytest.raises(PodioConfigError, match="No Podio apps are usable"):
         load_config({"PODIO_CLIENT_ID": "a", "PODIO_CLIENT_SECRET": "b"})
 
 
@@ -94,6 +94,40 @@ def test_load_config_reads_apps_file(tmp_path):
     path.write_text(json.dumps({"deals": {"app_id": "9", "app_token": "t"}}))
     config = load_config({**BASE_ENV, "PODIO_APPS_FILE": str(path)})
     assert config.apps["deals"].app_id == "9"
+
+
+def test_blank_json_token_records_the_app_as_unconfigured():
+    spec = json.dumps(
+        {
+            "_comment": "ignored",
+            "deals": {"app_id": "1", "app_token": "real"},
+            "labs": {"app_id": "2", "app_token": ""},
+            "customers": {"app_id": "3", "app_token": "your-app-token"},
+        }
+    )
+    config = load_config({**BASE_ENV, "PODIO_APPS": spec})
+    assert set(config.apps) == {"deals"}
+    assert config.unconfigured == ["customers", "labs"]
+
+
+def test_all_tokens_blank_is_a_config_error_naming_the_count():
+    spec = json.dumps({"labs": {"app_id": "2", "app_token": ""}})
+    with pytest.raises(PodioConfigError, match="1 app\\(s\\) are listed but have no token"):
+        load_config({**BASE_ENV, "PODIO_APPS": spec})
+
+
+def test_unconfigured_alias_gets_a_token_specific_error():
+    spec = json.dumps(
+        {"deals": {"app_id": "1", "app_token": "real"}, "labs": {"app_id": "2", "app_token": ""}}
+    )
+    config = load_config({**BASE_ENV, "PODIO_APPS": spec})
+    with pytest.raises(PodioConfigError, match="has no app_token"):
+        config.credentials_for("labs")
+
+
+def test_compact_form_still_requires_a_token():
+    with pytest.raises(PodioConfigError, match="Malformed"):
+        parse_apps("deals=123:")
 
 
 def test_credentials_for_unknown_alias_lists_known_ones():

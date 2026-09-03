@@ -22,6 +22,9 @@ import httpx
 
 DEFAULT_API_BASE = "https://api.podio.com"
 
+# Values that mean "not filled in yet" rather than a real token.
+_TOKEN_PLACEHOLDERS = frozenset({"your-app-token", "app-token", "todo", "changeme"})
+
 # Refresh a little before Podio actually expires the token (8h by default) so a
 # long-running call never starts with a token that dies mid-flight.
 TOKEN_EXPIRY_MARGIN_SECONDS = 300
@@ -60,17 +63,26 @@ class PodioConfig:
     client_id: str
     client_secret: str
     apps: dict[str, AppCredentials] = field(default_factory=dict)
+    # Aliases listed with no app token yet -- known to exist, but not reachable.
+    # Kept separate so the error for one can say that, rather than "unknown app".
+    unconfigured: list[str] = field(default_factory=list)
     api_base: str = DEFAULT_API_BASE
 
     def credentials_for(self, alias: str) -> AppCredentials:
         try:
             return self.apps[alias]
         except KeyError:
-            known = ", ".join(sorted(self.apps)) or "<none configured>"
+            pass
+        known = ", ".join(sorted(self.apps)) or "<none configured>"
+        if alias in self.unconfigured:
             raise PodioConfigError(
-                f"Unknown app {alias!r}. Configured apps: {known}. "
-                "Add it to PODIO_APPS or PODIO_APPS_FILE."
-            ) from None
+                f"App {alias!r} is listed but has no app_token, so it cannot be reached. "
+                f"Add its token (Podio > the app > Developer). Configured apps: {known}."
+            )
+        raise PodioConfigError(
+            f"Unknown app {alias!r}. Configured apps: {known}. "
+            "Add it to PODIO_APPS or PODIO_APPS_FILE."
+        )
 
 
 def parse_apps(spec: str) -> dict[str, AppCredentials]:
@@ -85,6 +97,11 @@ def parse_apps(spec: str) -> dict[str, AppCredentials]:
     * JSON, for a file listing many apps::
 
           {"deals": {"app_id": "123456789", "app_token": "a1b2c3"}}
+
+    In the JSON form an ``app_token`` may be left empty, which records the app
+    without making it reachable: that is what lets a generated template list
+    every app in an org while only the ones you use get a token.  Keys starting
+    with an underscore are ignored, so a template can carry a ``_comment``.
     """
     spec = spec.strip()
     if not spec:
@@ -97,11 +114,13 @@ def parse_apps(spec: str) -> dict[str, AppCredentials]:
             raise PodioConfigError(f"PODIO_APPS is not valid JSON: {exc}") from exc
         apps: dict[str, AppCredentials] = {}
         for alias, entry in raw.items():
+            if alias.startswith("_"):
+                continue
             if not isinstance(entry, dict) or "app_id" not in entry or "app_token" not in entry:
                 raise PodioConfigError(
                     f"App {alias!r} must be an object with 'app_id' and 'app_token'."
                 )
-            apps[alias] = AppCredentials(alias, str(entry["app_id"]), str(entry["app_token"]))
+            apps[alias] = AppCredentials(alias, str(entry["app_id"]), str(entry["app_token"]).strip())
         return apps
 
     apps = {}
@@ -118,6 +137,11 @@ def parse_apps(spec: str) -> dict[str, AppCredentials]:
         alias = alias.strip()
         apps[alias] = AppCredentials(alias, app_id.strip(), app_token.strip())
     return apps
+
+
+def _token_unset(app_token: str) -> bool:
+    """Whether an app token is a blank or an unedited placeholder."""
+    return not app_token or app_token in _TOKEN_PLACEHOLDERS or app_token.startswith("<")
 
 
 def load_config(env: dict[str, str] | None = None) -> PodioConfig:
@@ -141,18 +165,23 @@ def load_config(env: dict[str, str] | None = None) -> PodioConfig:
         except OSError as exc:
             raise PodioConfigError(f"Cannot read PODIO_APPS_FILE {apps_file!r}: {exc}") from exc
 
-    apps = parse_apps(spec)
+    parsed = parse_apps(spec)
+    apps = {alias: creds for alias, creds in parsed.items() if not _token_unset(creds.app_token)}
+    unconfigured = sorted(alias for alias in parsed if alias not in apps)
+
     if not apps:
+        listed = f" {len(unconfigured)} app(s) are listed but have no token." if unconfigured else ""
         raise PodioConfigError(
-            "No Podio apps configured. Set PODIO_APPS (or PODIO_APPS_FILE) to at least one "
+            "No Podio apps are usable. Set PODIO_APPS (or PODIO_APPS_FILE) to at least one "
             "'alias=app_id:app_token' entry -- find the app_id and app_token under "
-            "Podio > your app > Developer."
+            f"Podio > your app > Developer.{listed}"
         )
 
     return PodioConfig(
         client_id=client_id,
         client_secret=client_secret,
         apps=apps,
+        unconfigured=unconfigured,
         api_base=env.get("PODIO_API_BASE", DEFAULT_API_BASE).rstrip("/"),
     )
 

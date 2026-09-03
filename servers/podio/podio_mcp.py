@@ -83,19 +83,25 @@ def _write(destructive: bool = False) -> ToolAnnotations:
     title="List configured Podio apps",
     description=(
         "List the Podio app aliases this server is configured for. Every other tool takes one "
-        "of these aliases as its 'app' argument. Makes no API call."
+        "of these aliases as its 'app' argument. Also lists aliases that are known but have no "
+        "app token yet -- those exist in Podio but cannot be reached until a token is added. "
+        "Makes no API call."
     ),
     annotations=_read_only(),
 )
 @surface_errors
 async def podio_list_apps() -> dict[str, Any]:
     config = client().config
-    return {
+    result: dict[str, Any] = {
         "apps": [
             {"alias": credentials.alias, "app_id": credentials.app_id}
             for credentials in config.apps.values()
         ]
     }
+    if config.unconfigured:
+        result["unconfigured"] = config.unconfigured
+        result["note"] = "Unconfigured apps need an app_token added before they can be used."
+    return result
 
 
 @mcp.tool(

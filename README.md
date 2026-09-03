@@ -30,9 +30,25 @@ token for one app grants nothing anywhere else in the org — there is no way to
 list the other apps in a space or read across the organization with it. To reach
 a second app, add a second alias with that app's own token.
 
-This install targets Modular Devices (org `1110222`) → Imaging (space `4686720`)
-→ **Service Calls / Repairs** (app `16205569`), aliased `service_calls` in
-`.env.example`.
+This install targets Modular Devices (org `1110222`) → Imaging (space
+`4686720`). All 23 apps in that space are listed with their IDs in
+`servers/podio/apps.template.json`; each one still needs its own token before it
+can be reached.
+
+Because one token per app gets tedious past a handful of apps, the template is
+designed to be filled in gradually: copy it to `apps.json`, paste tokens into
+only the apps you actually use, and leave the rest blank. Blank-token apps are
+skipped at startup and reported by `podio_list_apps` as `unconfigured`, so it is
+clear they exist but are not reachable.
+
+```sh
+cp servers/podio/apps.template.json servers/podio/apps.json
+# paste tokens into the apps you need, then:
+echo 'PODIO_APPS_FILE=servers/podio/apps.json' >> .env
+```
+
+`apps.json` is gitignored. For one or two apps, the `PODIO_APPS` env var in
+`.env.example` is simpler than the file.
 
 ### Setup
 
@@ -51,9 +67,6 @@ This install targets Modular Devices (org `1110222`) → Imaging (space `4686720
 
    `.env` is gitignored; `.mcp.json` only references the variable names, so no
    secret is ever committed.
-
-With many apps, put them in a JSON file (see `servers/podio/apps.example.json`)
-and point `PODIO_APPS_FILE` at it instead of setting `PODIO_APPS`.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
