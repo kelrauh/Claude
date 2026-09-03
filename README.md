@@ -22,6 +22,18 @@ scope. It is a drop-in alternative (`{"type": "http", "url": "..."}`), but its
 OAuth flow needs an interactive browser login, so it can't be authorized from a
 remote session.
 
+### Scope
+
+App auth is per app, so the only ID the server needs is an **App ID** and its
+matching app token. Organization and space IDs are not part of the flow, and a
+token for one app grants nothing anywhere else in the org — there is no way to
+list the other apps in a space or read across the organization with it. To reach
+a second app, add a second alias with that app's own token.
+
+This install targets Modular Devices (org `1110222`) → Imaging (space `4686720`)
+→ **Service Calls / Repairs** (app `16205569`), aliased `service_calls` in
+`.env.example`.
+
 ### Setup
 
 1. Create an API key at <https://podio.com/settings/api>. Note the **Client ID**
