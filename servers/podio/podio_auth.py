@@ -128,8 +128,16 @@ def authorize(
     redirect_uri: str,
     api_base: str,
     timeout: int,
+    code_url: str | None = None,
+    state: str | None = None,
 ) -> str:
     """Run the browser flow and return the refresh token."""
+    if code_url:
+        # Second half of a split run: the browser step already happened.
+        if not state:
+            raise SystemExit("--code-url also needs the --state value printed by the first run.")
+        return _exchange(client_id, client_secret, redirect_uri, api_base, extract_code(code_url, state))
+
     state = secrets.token_urlsafe(24)
     url = f"{AUTHORIZE_URL}?" + urlencode(
         {
@@ -141,6 +149,7 @@ def authorize(
     )
 
     print(f"Open this URL to authorize (it should open automatically):\n\n  {url}\n")
+    print(f"(state for this attempt: {state})")
     try:
         webbrowser.open(url)
     except Exception:  # a headless box has no browser; the printed URL still works
@@ -153,8 +162,23 @@ def authorize(
             f"Podio will send your browser to {redirect_uri} with the code in the address bar.\n"
             "That page does not need to exist -- an error page is fine, the URL is what matters."
         )
+        if not sys.stdin.isatty():
+            # Some terminals (Git Bash among them) cannot prompt reliably; the
+            # split form needs no prompt at all.
+            raise SystemExit(
+                "This terminal cannot prompt for input. Re-run passing the URL directly:\n"
+                f"  --redirect-uri {redirect_uri} --state {state} --code-url '<the URL>'\n"
+                "using the authorize URL above in your browser first."
+            )
         code = extract_code(input("\nPaste the full URL you landed on:\n> "), state)
 
+    return _exchange(client_id, client_secret, redirect_uri, api_base, code)
+
+
+def _exchange(
+    client_id: str, client_secret: str, redirect_uri: str, api_base: str, code: str
+) -> str:
+    """Trade an authorization code for a refresh token."""
     response = httpx.post(
         f"{api_base}/oauth/token/v2",
         data={
@@ -221,6 +245,17 @@ def main() -> None:
         default=os.environ.get("PODIO_TOKEN_FILE", DEFAULT_TOKEN_FILE),
         help=f"where to write the refresh token (default {DEFAULT_TOKEN_FILE})",
     )
+    parser.add_argument(
+        "--code-url",
+        help=(
+            "The redirect URL you were sent to, passed in rather than typed at a prompt. "
+            "Use with --state from the first run when a terminal cannot prompt interactively."
+        ),
+    )
+    parser.add_argument(
+        "--state",
+        help="The state value printed by the first run, checked against --code-url.",
+    )
     parser.add_argument("--timeout", type=int, default=300, help="seconds to wait (default 300)")
     args = parser.parse_args()
 
@@ -239,6 +274,8 @@ def main() -> None:
         redirect_uri,
         os.environ.get("PODIO_API_BASE", DEFAULT_API_BASE).rstrip("/"),
         args.timeout,
+        code_url=args.code_url,
+        state=args.state,
     )
 
     path = Path(args.token_file)

@@ -80,3 +80,11 @@ def test_written_token_file_is_owner_only(tmp_path):
     write_token(path, "secret-refresh")
     assert '"refresh_token": "secret-refresh"' in path.read_text()
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_code_url_without_state_is_refused():
+    from podio_auth import authorize
+
+    with pytest.raises(SystemExit, match="--state"):
+        authorize("cid", "secret", "https://claude.ai/cb", "https://api.podio.com", 1,
+                  code_url="https://claude.ai/cb?code=x&state=y")
