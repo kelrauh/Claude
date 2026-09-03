@@ -1,0 +1,31 @@
+{
+  "_comment": "Copy to apps.json, paste in the app tokens you need, and point PODIO_APPS_FILE at it. Apps left with an empty token are skipped, so you only need to fill in the ones you actually use. Token: open the app in Podio > wrench menu > Developer.",
+
+  "service_calls": { "app_id": "16205569", "app_token": "" },
+  "labs": { "app_id": "16774932", "app_token": "" },
+  "customers": { "app_id": "16205567", "app_token": "" },
+  "contacts": { "app_id": "21288049", "app_token": "" },
+  "projects": { "app_id": "26839744", "app_token": "" },
+  "meetings": { "app_id": "26839743", "app_token": "" },
+  "deliverables": { "app_id": "26839742", "app_token": "" },
+
+  "equipment_inventory": { "app_id": "16205577", "app_token": "" },
+  "injector_inventory": { "app_id": "29748893", "app_token": "" },
+  "hvac_inventory": { "app_id": "16731217", "app_token": "" },
+  "ups_inventory": { "app_id": "26161352", "app_token": "" },
+  "hemodynamic_inventory": { "app_id": "16205602", "app_token": "" },
+  "workstation_inventory": { "app_id": "16205601", "app_token": "" },
+  "chiller_inventory": { "app_id": "16205604", "app_token": "" },
+  "tube_inventory": { "app_id": "16205584", "app_token": "" },
+  "xray_systems": { "app_id": "21323587", "app_token": "" },
+  "service_test_equipment": { "app_id": "22640397", "app_token": "" },
+
+  "system_pm": { "app_id": "22791538", "app_token": "" },
+  "hvac_pm": { "app_id": "28612595", "app_token": "" },
+
+  "delivery_checklist": { "app_id": "16205568", "app_token": "" },
+  "ge_pre_delivery_checklist": { "app_id": "26556361", "app_token": "" },
+  "philips_pre_delivery_checklist": { "app_id": "26695605", "app_token": "" },
+
+  "manuals_docs": { "app_id": "22890455", "app_token": "" }
+}

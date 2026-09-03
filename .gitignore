@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Credentials never belong in the repo -- see .env.example.
+.env
+.podio-token.json
+*.podio-token.json
+servers/podio/apps.json
