@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# Real credentials never belong in the repo -- see .env.example.
+# Credentials never belong in the repo -- see .env.example.
 .env
+.podio-token.json
+*.podio-token.json
 servers/podio/apps.json

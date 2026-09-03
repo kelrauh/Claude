@@ -3,18 +3,21 @@
 # requires-python = ">=3.11"
 # dependencies = ["mcp>=2.0", "httpx>=0.27"]
 # ///
-"""An MCP server over the Podio API, authenticated with the app-auth flow.
+"""An MCP server over the Podio API.
 
-Every tool takes an ``app`` alias, because app authentication issues a token per
-Podio app rather than per user: the aliases are the ones configured in
-``PODIO_APPS``.  Run ``podio_list_apps`` first to see them, then
-``podio_get_app_schema`` to learn a given app's field external_ids before
-filtering or writing.
+Start with ``podio_list_apps``: it names the app aliases available and which
+authentication mode is in force.  Then ``podio_get_app_schema`` gives an app's
+field external_ids, which every filter and write is keyed by.
+
+Under account-wide auth every app the Podio account can see is reachable, apps
+can be addressed by numeric id as well as alias, and the org/space tools work.
+Under app auth each app needs its own token and nothing spans apps.
 
 Required environment:
     PODIO_CLIENT_ID, PODIO_CLIENT_SECRET  -- from https://podio.com/settings/api
-    PODIO_APPS                            -- 'alias=app_id:app_token,...'
-                                             (or PODIO_APPS_FILE, holding JSON)
+Then either:
+    PODIO_TOKEN_FILE  -- written by podio_auth.py (account-wide), or
+    PODIO_APPS        -- 'alias=app_id:app_token,...' (or PODIO_APPS_FILE)
 """
 
 from __future__ import annotations
@@ -93,14 +96,24 @@ def _write(destructive: bool = False) -> ToolAnnotations:
 async def podio_list_apps() -> dict[str, Any]:
     config = client().config
     result: dict[str, Any] = {
+        "auth": "account-wide" if config.user_auth else "per-app tokens",
         "apps": [
-            {"alias": credentials.alias, "app_id": credentials.app_id}
-            for credentials in config.apps.values()
-        ]
+            {"alias": app.alias, "app_id": app.app_id}
+            for app in config.apps.values()
+            if config.reachable(app.alias)
+        ],
     }
-    if config.unconfigured:
+    if config.user_auth:
+        result["note"] = (
+            "Account-wide auth is active: any app id works as the 'app' argument, not just the "
+            "aliases listed, and podio_list_orgs / podio_list_space_apps can discover more."
+        )
+    elif config.unconfigured:
         result["unconfigured"] = config.unconfigured
-        result["note"] = "Unconfigured apps need an app_token added before they can be used."
+        result["note"] = (
+            "These apps are known but have no app_token. Run podio_auth.py once for access to "
+            "every app, or add each token individually."
+        )
     return result
 
 
@@ -115,8 +128,8 @@ async def podio_list_apps() -> dict[str, Any]:
 )
 @surface_errors
 async def podio_get_app_schema(app: str) -> dict[str, Any]:
-    app_id = client().config.credentials_for(app).app_id
-    return simplify_app(await client().request(app, "GET", f"/app/{app_id}"))
+    app_id, scope = client().config.resolve(app)
+    return simplify_app(await client().request(scope, "GET", f"/app/{app_id}"))
 
 
 @mcp.tool(
@@ -140,7 +153,7 @@ async def podio_find_items(
     view_id: int | None = None,
     raw: bool = False,
 ) -> dict[str, Any]:
-    app_id = client().config.credentials_for(app).app_id
+    app_id, scope = client().config.resolve(app)
     body: dict[str, Any] = {
         "limit": max(1, min(limit, MAX_LIMIT)),
         "offset": max(0, offset),
@@ -158,7 +171,7 @@ async def podio_find_items(
     if view_id is not None:
         path += f"{view_id}/"
 
-    result = await client().request(app, "POST", path, json_body=body)
+    result = await client().request(scope, "POST", path, json_body=body)
     items = result.get("items") or []
     return {
         "total": result.get("total"),
@@ -177,8 +190,8 @@ async def podio_find_items(
     annotations=_read_only(),
 )
 @surface_errors
-async def podio_get_item(app: str, item_id: int, raw: bool = False) -> dict[str, Any]:
-    item = await client().request(app, "GET", f"/item/{item_id}")
+async def podio_get_item(item_id: int, app: str | None = None, raw: bool = False) -> dict[str, Any]:
+    item = await client().request(client().config.scope_for(app), "GET", f"/item/{item_id}")
     return item if raw else simplify_item(item)
 
 
@@ -192,9 +205,9 @@ async def podio_get_item(app: str, item_id: int, raw: bool = False) -> dict[str,
 )
 @surface_errors
 async def podio_search_app(app: str, query: str, limit: int = 20) -> dict[str, Any]:
-    app_id = client().config.credentials_for(app).app_id
+    app_id, scope = client().config.resolve(app)
     results = await client().request(
-        app,
+        scope,
         "POST",
         f"/search/app/{app_id}/v2",
         json_body={"query": query, "limit": max(1, min(limit, 100)), "ref_type": "item"},
@@ -220,8 +233,8 @@ async def podio_search_app(app: str, query: str, limit: int = 20) -> dict[str, A
 )
 @surface_errors
 async def podio_list_views(app: str) -> dict[str, Any]:
-    app_id = client().config.credentials_for(app).app_id
-    views = await client().request(app, "GET", f"/view/app/{app_id}/")
+    app_id, scope = client().config.resolve(app)
+    views = await client().request(scope, "GET", f"/view/app/{app_id}/")
     return {
         "views": [
             {"view_id": view.get("view_id"), "name": view.get("name")} for view in views or []
@@ -242,9 +255,9 @@ async def podio_list_views(app: str) -> dict[str, Any]:
 async def podio_create_item(
     app: str, fields: dict[str, Any], silent: bool = False
 ) -> dict[str, Any]:
-    app_id = client().config.credentials_for(app).app_id
+    app_id, scope = client().config.resolve(app)
     return await client().request(
-        app,
+        scope,
         "POST",
         f"/item/app/{app_id}/",
         json_body={"fields": fields},
@@ -262,10 +275,10 @@ async def podio_create_item(
 )
 @surface_errors
 async def podio_update_item(
-    app: str, item_id: int, fields: dict[str, Any], silent: bool = False
+    item_id: int, fields: dict[str, Any], app: str | None = None, silent: bool = False
 ) -> dict[str, Any]:
     result = await client().request(
-        app,
+        client().config.scope_for(app),
         "PUT",
         f"/item/{item_id}",
         json_body={"fields": fields},
@@ -280,8 +293,8 @@ async def podio_update_item(
     annotations=_write(destructive=True),
 )
 @surface_errors
-async def podio_delete_item(app: str, item_id: int) -> dict[str, Any]:
-    await client().request(app, "DELETE", f"/item/{item_id}")
+async def podio_delete_item(item_id: int, app: str | None = None) -> dict[str, Any]:
+    await client().request(client().config.scope_for(app), "DELETE", f"/item/{item_id}")
     return {"item_id": item_id, "status": "deleted"}
 
 
@@ -291,8 +304,10 @@ async def podio_delete_item(app: str, item_id: int) -> dict[str, Any]:
     annotations=_read_only(),
 )
 @surface_errors
-async def podio_list_comments(app: str, item_id: int) -> dict[str, Any]:
-    comments = await client().request(app, "GET", f"/comment/item/{item_id}/")
+async def podio_list_comments(item_id: int, app: str | None = None) -> dict[str, Any]:
+    comments = await client().request(
+        client().config.scope_for(app), "GET", f"/comment/item/{item_id}/"
+    )
     return {
         "comments": [
             {
@@ -312,10 +327,99 @@ async def podio_list_comments(app: str, item_id: int) -> dict[str, Any]:
     annotations=_write(),
 )
 @surface_errors
-async def podio_add_comment(app: str, item_id: int, text: str) -> dict[str, Any]:
+async def podio_add_comment(item_id: int, text: str, app: str | None = None) -> dict[str, Any]:
     return await client().request(
-        app, "POST", f"/comment/item/{item_id}/", json_body={"value": text}
+        client().config.scope_for(app), "POST", f"/comment/item/{item_id}/", json_body={"value": text}
     )
+
+
+# -- account-wide tools -------------------------------------------------
+# These reach past a single app, so they exist only under user auth; with app
+# tokens they fail with an error saying so rather than silently returning less.
+
+
+@mcp.tool(
+    title="List organizations and spaces",
+    description=(
+        "List the Podio organizations the account belongs to and the spaces in each. "
+        "Requires account-wide auth. Use this to discover space ids for podio_list_space_apps."
+    ),
+    annotations=_read_only(),
+)
+@surface_errors
+async def podio_list_orgs() -> dict[str, Any]:
+    orgs = await client().request_user("GET", "/org/")
+    return {
+        "orgs": [
+            {
+                "org_id": org.get("org_id"),
+                "name": org.get("name"),
+                "spaces": [
+                    {"space_id": space.get("space_id"), "name": space.get("name")}
+                    for space in org.get("spaces") or []
+                ],
+            }
+            for org in orgs or []
+        ]
+    }
+
+
+@mcp.tool(
+    title="List apps in a space",
+    description=(
+        "List every app in a space, with its app_id. Requires account-wide auth. The returned "
+        "app_ids can be passed directly as the 'app' argument of the item tools, whether or not "
+        "they have an alias."
+    ),
+    annotations=_read_only(),
+)
+@surface_errors
+async def podio_list_space_apps(space_id: int) -> dict[str, Any]:
+    apps = await client().request_user("GET", f"/app/space/{space_id}/")
+    aliases = {app.app_id: alias for alias, app in client().config.apps.items()}
+    return {
+        "apps": [
+            {
+                "app_id": app.get("app_id"),
+                "alias": aliases.get(str(app.get("app_id"))),
+                "name": (app.get("config") or {}).get("name"),
+                "item_name": (app.get("config") or {}).get("item_name"),
+            }
+            for app in apps or []
+        ]
+    }
+
+
+@mcp.tool(
+    title="Search a space",
+    description=(
+        "Full-text search across every app in a space at once. Requires account-wide auth -- "
+        "this is the cross-app search that per-app tokens cannot do. Returns hits with the app "
+        "each belongs to, so you can follow up with podio_get_item."
+    ),
+    annotations=_read_only(),
+)
+@surface_errors
+async def podio_search_space(space_id: int, query: str, limit: int = 20) -> dict[str, Any]:
+    results = await client().request_user(
+        "POST",
+        f"/search/space/{space_id}/v2",
+        json_body={"query": query, "limit": max(1, min(limit, 100)), "ref_type": "item"},
+    )
+    hits = results.get("results") if isinstance(results, dict) else results
+    return {
+        "results": [
+            {
+                "item_id": hit.get("id"),
+                "title": hit.get("title"),
+                "app": (hit.get("app") or {}).get("name"),
+                "app_id": (hit.get("app") or {}).get("app_id"),
+                "snippet": hit.get("snippet"),
+                "link": hit.get("link"),
+            }
+            for hit in hits or []
+        ]
+    }
 
 
 def main() -> None:

@@ -11,7 +11,9 @@
       "env": {
         "PODIO_CLIENT_ID": "${PODIO_CLIENT_ID}",
         "PODIO_CLIENT_SECRET": "${PODIO_CLIENT_SECRET}",
-        "PODIO_APPS": "${PODIO_APPS}"
+        "PODIO_TOKEN_FILE": "${PODIO_TOKEN_FILE:-.podio-token.json}",
+        "PODIO_APPS": "${PODIO_APPS:-}",
+        "PODIO_APPS_FILE": "${PODIO_APPS_FILE:-}"
       }
     }
   }
