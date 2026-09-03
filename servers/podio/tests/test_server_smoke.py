@@ -74,7 +74,14 @@ class StubPodio(BaseHTTPRequestHandler):
         StubPodio.calls.append(("POST", self.path))
         body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
         if self.path == "/oauth/token/v2":
-            StubPodio.grants.append(dict(pair.split("=", 1) for pair in body.split("&"))["grant_type"])
+            # Podio's token endpoint takes JSON; the client falls back to form
+            # encoding only if a server rejects that, so accept either here.
+            parsed = (
+                json.loads(body)
+                if body.startswith("{")
+                else dict(pair.split("=", 1) for pair in body.split("&"))
+            )
+            StubPodio.grants.append(parsed["grant_type"])
             self._reply({"access_token": "tok", "expires_in": 28800, "refresh_token": "rotated"})
         else:
             self._reply(ITEMS)

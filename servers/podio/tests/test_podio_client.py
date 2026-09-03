@@ -53,7 +53,11 @@ class Recorder:
         return PodioClient(self.config, httpx.AsyncClient(transport=httpx.MockTransport(self.handler)))
 
     def form(self, index: int) -> dict[str, str]:
-        return dict(pair.split("=", 1) for pair in self.requests[index].content.decode().split("&"))
+        """The token body of request ``index``, however it was encoded."""
+        raw = self.requests[index].content.decode()
+        if raw.startswith("{"):
+            return json.loads(raw)
+        return dict(pair.split("=", 1) for pair in raw.split("&"))
 
 
 # -- config parsing ----------------------------------------------------
@@ -358,3 +362,43 @@ async def test_api_error_includes_podio_error_detail():
     recorder = Recorder([TOKEN, (404, {"error": "not_found", "error_description": "No item"})])
     with pytest.raises(PodioError, match="No item"):
         await recorder.client().request("app:deals", "GET", "/item/1")
+
+
+# -- token body encoding -----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_token_bodies_are_sent_as_json():
+    """Podio's /oauth/token/v2 rejects a form-encoded body outright."""
+    recorder = Recorder([TOKEN, (200, {"ok": 1})])
+    await recorder.client().request("app:deals", "GET", "/item/1")
+
+    request = recorder.requests[0]
+    assert request.headers["content-type"].startswith("application/json")
+    assert json.loads(request.content.decode())["grant_type"] == "app"
+
+
+@pytest.mark.asyncio
+async def test_a_body_rejection_is_retried_form_encoded():
+    recorder = Recorder(
+        [
+            (400, {"error_description": "Invalid value null (null): must be object"}),
+            TOKEN[1] and (200, TOKEN[1]),
+            (200, {"ok": 1}),
+        ]
+    )
+    assert await recorder.client().request("app:deals", "GET", "/item/1") == {"ok": 1}
+
+    assert recorder.requests[0].headers["content-type"].startswith("application/json")
+    assert recorder.requests[1].headers["content-type"].startswith(
+        "application/x-www-form-urlencoded"
+    )
+    assert recorder.form(1)["grant_type"] == "app"
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_400_is_not_retried():
+    recorder = Recorder([(400, {"error": "invalid_client", "error_description": "Invalid client"})])
+    with pytest.raises(PodioError, match="Invalid client"):
+        await recorder.client().request("app:deals", "GET", "/item/1")
+    assert len(recorder.requests) == 1

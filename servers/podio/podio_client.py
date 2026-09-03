@@ -44,6 +44,19 @@ USER_SCOPE = "user"
 _TOKEN_PLACEHOLDERS = frozenset({"your-app-token", "app-token", "todo", "changeme"})
 
 
+def should_retry_as_form(response: httpx.Response) -> bool:
+    """Whether a token response looks like the body encoding was the problem.
+
+    ``/oauth/token/v2`` takes a JSON body -- posting form-encoded fields gets
+    ``Invalid value null (null): must be object``, since Podio parses the body as
+    JSON and finds none.  Older deployments accept only form encoding, so a
+    rejection that names the body is retried the other way before giving up.
+    """
+    if response.status_code not in (400, 415):
+        return False
+    return "must be object" in response.text or response.status_code == 415
+
+
 class PodioError(RuntimeError):
     """An error surfaced by the Podio API or by our configuration of it."""
 
@@ -337,14 +350,15 @@ class PodioClient:
         return self._locks.setdefault(scope, asyncio.Lock())
 
     async def _token_request(self, payload: dict[str, str]) -> _Token:
-        response = await self._http.post(
-            f"{self._config.api_base}/oauth/token/v2",
-            data={
-                **payload,
-                "client_id": self._config.client_id,
-                "client_secret": self._config.client_secret,
-            },
-        )
+        url = f"{self._config.api_base}/oauth/token/v2"
+        body = {
+            **payload,
+            "client_id": self._config.client_id,
+            "client_secret": self._config.client_secret,
+        }
+        response = await self._http.post(url, json=body)
+        if should_retry_as_form(response):
+            response = await self._http.post(url, data=body)
         if response.status_code >= 400:
             raise PodioError(f"Podio authentication failed: {_describe_error(response)}")
         body = response.json()

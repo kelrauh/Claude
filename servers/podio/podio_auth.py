@@ -42,7 +42,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import httpx
+
+from podio_client import should_retry_as_form
 
 AUTHORIZE_URL = "https://podio.com/oauth/authorize"
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]", "::1"})
@@ -179,17 +183,17 @@ def _exchange(
     client_id: str, client_secret: str, redirect_uri: str, api_base: str, code: str
 ) -> str:
     """Trade an authorization code for a refresh token."""
-    response = httpx.post(
-        f"{api_base}/oauth/token/v2",
-        data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": redirect_uri,
-            "client_id": client_id,
-            "client_secret": client_secret,
-        },
-        timeout=30.0,
-    )
+    url = f"{api_base}/oauth/token/v2"
+    body = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+    response = httpx.post(url, json=body, timeout=30.0)
+    if should_retry_as_form(response):
+        response = httpx.post(url, data=body, timeout=30.0)
     if response.status_code >= 400:
         raise SystemExit(f"Token exchange failed: HTTP {response.status_code} {response.text[:300]}")
 
