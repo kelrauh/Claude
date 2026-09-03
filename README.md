@@ -34,8 +34,15 @@ get its tool design rather than one shaped around these apps.
 ### Setup
 
 1. Create an API key at <https://podio.com/settings/api>; note the **Client ID**
-   and **Client Secret**. For account-wide access, set the key's registered
-   domain to `localhost` so the loopback redirect is accepted.
+   and **Client Secret**. Podio only redirects back to the domain registered
+   against the key, which decides how step 3 runs:
+
+   * domain `localhost` → the default loopback flow, fully automatic;
+   * any other domain (e.g. `claude.ai`) → the same flow, but you paste the
+     redirect URL back into the terminal.
+
+   Registering a second key for `localhost` keeps an existing key untouched;
+   changing a key's domain would break anything already using it.
 2. Copy `.env.example` to `.env`, fill in the client ID and secret, and load it:
 
    ```sh
@@ -47,8 +54,18 @@ get its tool design rather than one shaped around these apps.
    `.podio-token.json` (mode 0600, gitignored):
 
    ```sh
+   # key registered to localhost
    uv run --script servers/podio/podio_auth.py
+
+   # key registered to another domain, e.g. claude.ai
+   uv run --script servers/podio/podio_auth.py \
+       --redirect-uri https://claude.ai/podio-callback
    ```
+
+   In the second form Podio sends the browser to that URL with the code in the
+   address bar. The page itself does not need to exist — an error page is fine.
+   Copy the whole address and paste it at the prompt; the helper checks the
+   `state` parameter matches before using the code.
 
 4. Start Claude Code from this directory and check `/mcp` shows **podio**.
 
@@ -84,6 +101,7 @@ account-wide auth the aliases work with no tokens filled in at all.
 | `PODIO_REFRESH_TOKEN` | no | Refresh token inline, instead of a file |
 | `PODIO_APPS` | no | `alias=app_id:app_token`, comma-separated |
 | `PODIO_APPS_FILE` | no | Path to a JSON app list, instead of `PODIO_APPS` |
+| `PODIO_REDIRECT_URI` | no | Default redirect URI for `podio_auth.py` |
 | `PODIO_API_BASE` | no | API base URL, default `https://api.podio.com` |
 
 Podio rotates the refresh token every time it is redeemed, so the new value is

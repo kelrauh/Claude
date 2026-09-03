@@ -11,9 +11,20 @@ that needs a browser; afterwards the server refreshes headlessly.
 
     uv run --script servers/podio/podio_auth.py
 
-The API key's registered domain must be ``localhost`` for the redirect to be
-accepted -- set that at https://podio.com/settings/api, on the key whose client
-ID you are using.
+Podio only redirects back to the domain registered against the API key, so the
+flow comes in two shapes:
+
+* **Loopback** (default) -- needs the key's domain set to ``localhost``.  A
+  throwaway web server catches the redirect and the code never leaves the
+  machine.
+* **Paste-back** -- for a key registered to any other domain, e.g. ``claude.ai``.
+  Podio redirects the browser to a URL on that domain that need not exist; the
+  authorization code is in the address bar, and you paste that URL back here::
+
+      uv run --script servers/podio/podio_auth.py \\
+          --redirect-uri https://claude.ai/podio-callback
+
+  Non-loopback redirect URIs switch to this mode automatically.
 
 See https://developers.podio.com/authentication/server_side
 """
@@ -34,6 +45,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 
 AUTHORIZE_URL = "https://podio.com/oauth/authorize"
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]", "::1"})
 DEFAULT_API_BASE = "https://api.podio.com"
 DEFAULT_TOKEN_FILE = ".podio-token.json"
 CALLBACK_PATH = "/podio-callback"
@@ -41,6 +53,41 @@ CALLBACK_PATH = "/podio-callback"
 PAGE = """<!doctype html><meta charset="utf-8"><title>Podio</title>
 <body style="font:16px system-ui;margin:4rem auto;max-width:32rem">
 <h1>{heading}</h1><p>{detail}</p></body>"""
+
+
+def is_loopback(redirect_uri: str) -> bool:
+    """Whether we can catch this redirect ourselves with a local web server."""
+    return (urlparse(redirect_uri).hostname or "") in LOOPBACK_HOSTS
+
+
+def extract_code(pasted: str, expected_state: str) -> str:
+    """Pull the authorization code out of a pasted redirect URL.
+
+    Accepts the whole URL or just its query string, since people copy both.
+    """
+    pasted = pasted.strip().strip('"').strip("'")
+    if not pasted:
+        raise SystemExit("Nothing pasted.")
+
+    parsed = urlparse(pasted)
+    query = parse_qs(parsed.query or (pasted if "=" in pasted else ""))
+    values = {key: v[0] for key, v in query.items()}
+
+    if not values:
+        raise SystemExit(
+            "That URL has no query string. Copy the address bar exactly as it is after the "
+            "redirect -- it should contain '?code=...'."
+        )
+    if values.get("state") != expected_state:
+        raise SystemExit(
+            "State mismatch -- discarding this response rather than trusting it. "
+            "Re-run and paste the URL from this attempt's redirect."
+        )
+    code = values.get("code")
+    if not code:
+        detail = values.get("error_description") or values.get("error") or "no code in the URL"
+        raise SystemExit(f"Authorization failed: {detail}")
+    return code
 
 
 class _Callback(BaseHTTPRequestHandler):
@@ -75,9 +122,14 @@ class _Callback(BaseHTTPRequestHandler):
         _Callback.done.set()
 
 
-def authorize(client_id: str, client_secret: str, port: int, api_base: str, timeout: int) -> str:
+def authorize(
+    client_id: str,
+    client_secret: str,
+    redirect_uri: str,
+    api_base: str,
+    timeout: int,
+) -> str:
     """Run the browser flow and return the refresh token."""
-    redirect_uri = f"http://localhost:{port}{CALLBACK_PATH}"
     state = secrets.token_urlsafe(24)
     url = f"{AUTHORIZE_URL}?" + urlencode(
         {
@@ -88,33 +140,26 @@ def authorize(client_id: str, client_secret: str, port: int, api_base: str, time
         }
     )
 
-    server = HTTPServer(("127.0.0.1", port), _Callback)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-
     print(f"Open this URL to authorize (it should open automatically):\n\n  {url}\n")
     try:
         webbrowser.open(url)
     except Exception:  # a headless box has no browser; the printed URL still works
         pass
 
-    print(f"Waiting up to {timeout}s for the redirect back to {redirect_uri} ...")
-    if not _Callback.done.wait(timeout):
-        server.shutdown()
-        raise SystemExit("Timed out waiting for authorization.")
-    server.shutdown()
-
-    query = _Callback.result
-    if query.get("state") != state:
-        raise SystemExit("State mismatch -- discarding this response rather than trusting it.")
-    if "code" not in query:
-        detail = query.get("error_description") or query.get("error") or "no code returned"
-        raise SystemExit(f"Authorization failed: {detail}")
+    if is_loopback(redirect_uri):
+        code = _await_redirect(redirect_uri, state, timeout)
+    else:
+        print(
+            f"Podio will send your browser to {redirect_uri} with the code in the address bar.\n"
+            "That page does not need to exist -- an error page is fine, the URL is what matters."
+        )
+        code = extract_code(input("\nPaste the full URL you landed on:\n> "), state)
 
     response = httpx.post(
         f"{api_base}/oauth/token/v2",
         data={
             "grant_type": "authorization_code",
-            "code": query["code"],
+            "code": code,
             "redirect_uri": redirect_uri,
             "client_id": client_id,
             "client_secret": client_secret,
@@ -131,6 +176,28 @@ def authorize(client_id: str, client_secret: str, port: int, api_base: str, time
     return refresh_token
 
 
+def _await_redirect(redirect_uri: str, state: str, timeout: int) -> str:
+    """Serve the redirect target locally and wait for Podio to hit it."""
+    port = urlparse(redirect_uri).port or 80
+    server = HTTPServer(("127.0.0.1", port), _Callback)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    print(f"Waiting up to {timeout}s for the redirect back to {redirect_uri} ...")
+    try:
+        if not _Callback.done.wait(timeout):
+            raise SystemExit("Timed out waiting for authorization.")
+    finally:
+        server.shutdown()
+
+    query = _Callback.result
+    if query.get("state") != state:
+        raise SystemExit("State mismatch -- discarding this response rather than trusting it.")
+    if "code" not in query:
+        detail = query.get("error_description") or query.get("error") or "no code returned"
+        raise SystemExit(f"Authorization failed: {detail}")
+    return query["code"]
+
+
 def write_token(path: Path, refresh_token: str) -> None:
     payload = json.dumps({"refresh_token": refresh_token}, indent=2) + "\n"
     path.write_text(payload, encoding="utf-8")
@@ -139,6 +206,15 @@ def write_token(path: Path, refresh_token: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--redirect-uri",
+        default=os.environ.get("PODIO_REDIRECT_URI", "").strip() or None,
+        help=(
+            "Redirect URI registered with the API key. Defaults to "
+            f"http://localhost:8080{CALLBACK_PATH}. A non-loopback URI (e.g. "
+            "https://claude.ai/podio-callback) switches to pasting the URL back."
+        ),
+    )
     parser.add_argument("--port", type=int, default=8080, help="loopback port (default 8080)")
     parser.add_argument(
         "--token-file",
@@ -156,10 +232,11 @@ def main() -> None:
             "  set -a; . ./.env; set +a"
         )
 
+    redirect_uri = args.redirect_uri or f"http://localhost:{args.port}{CALLBACK_PATH}"
     refresh_token = authorize(
         client_id,
         client_secret,
-        args.port,
+        redirect_uri,
         os.environ.get("PODIO_API_BASE", DEFAULT_API_BASE).rstrip("/"),
         args.timeout,
     )
