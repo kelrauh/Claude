@@ -402,3 +402,43 @@ async def test_an_unrelated_400_is_not_retried():
     with pytest.raises(PodioError, match="Invalid client"):
         await recorder.client().request("app:deals", "GET", "/item/1")
     assert len(recorder.requests) == 1
+
+
+# -- .env fallback -----------------------------------------------------
+
+
+def test_dotenv_supplies_values_the_environment_lacks(tmp_path):
+    path = tmp_path / ".env"
+    path.write_text(
+        "# a comment\n"
+        "\n"
+        "PODIO_CLIENT_ID=from-file\n"
+        'PODIO_CLIENT_SECRET="quoted-secret"\n'
+        "PODIO_APPS=deals=1:tok\n"
+        "not-an-assignment\n"
+    )
+    config = load_config({"PODIO_TOKEN_FILE": ""}, dotenv=path)
+    assert config.client_id == "from-file"
+    assert config.client_secret == "quoted-secret"
+    assert config.apps["deals"].app_id == "1"
+
+
+def test_real_environment_wins_over_the_file(tmp_path):
+    path = tmp_path / ".env"
+    path.write_text("PODIO_CLIENT_ID=from-file\nPODIO_CLIENT_SECRET=s\nPODIO_APPS=deals=1:t\n")
+    config = load_config({"PODIO_CLIENT_ID": "from-env", "PODIO_TOKEN_FILE": ""}, dotenv=path)
+    assert config.client_id == "from-env"
+
+
+def test_empty_environment_values_do_not_blank_the_file(tmp_path):
+    # .mcp.json passes unset variables through as empty strings.
+    path = tmp_path / ".env"
+    path.write_text("PODIO_CLIENT_ID=from-file\nPODIO_CLIENT_SECRET=s\nPODIO_APPS=deals=1:t\n")
+    config = load_config({"PODIO_CLIENT_ID": "", "PODIO_APPS": "", "PODIO_TOKEN_FILE": ""}, dotenv=path)
+    assert config.client_id == "from-file"
+    assert config.apps["deals"].app_id == "1"
+
+
+def test_a_missing_dotenv_is_not_an_error(tmp_path):
+    with pytest.raises(PodioConfigError, match="PODIO_CLIENT_ID"):
+        load_config({"PODIO_TOKEN_FILE": ""}, dotenv=tmp_path / "absent")

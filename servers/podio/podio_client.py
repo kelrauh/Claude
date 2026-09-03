@@ -279,9 +279,46 @@ def parse_apps(spec: str) -> dict[str, AppCredentials]:
     return apps
 
 
-def load_config(env: dict[str, str] | None = None) -> PodioConfig:
-    """Build the server config from the environment."""
+def read_dotenv(path: Path) -> dict[str, str]:
+    """Parse a ``.env`` file into a dict, ignoring comments and blank lines.
+
+    Deliberately minimal: ``KEY=value`` per line, with optional surrounding
+    quotes stripped. Reading the file directly means credentials do not have to
+    be exported into the shell before starting the client, which is one fewer
+    step to get wrong -- and the only way a GUI client, which inherits no shell,
+    can see them at all.
+    """
+    values: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return values
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        values[key.strip()] = value
+    return values
+
+
+def load_config(env: dict[str, str] | None = None, dotenv: Path | None = None) -> PodioConfig:
+    """Build the server config from the environment, falling back to ``.env``.
+
+    A real environment variable wins over the file, but an empty one does not:
+    ``.mcp.json`` passes unset variables through as empty strings, and those must
+    not blank out a value the file does supply.
+    """
     env = os.environ if env is None else env
+    file_values = read_dotenv(Path(".env") if dotenv is None else dotenv)
+    if file_values:
+        env = {**file_values, **{key: value for key, value in env.items() if value}}
 
     client_id = env.get("PODIO_CLIENT_ID", "").strip()
     client_secret = env.get("PODIO_CLIENT_SECRET", "").strip()

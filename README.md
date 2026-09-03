@@ -43,12 +43,15 @@ get its tool design rather than one shaped around these apps.
 
    Registering a second key for `localhost` keeps an existing key untouched;
    changing a key's domain would break anything already using it.
-2. Copy `.env.example` to `.env`, fill in the client ID and secret, and load it:
+2. Copy `.env.example` to `.env` and fill in the client ID and secret:
 
    ```sh
    cp .env.example .env       # then edit it
-   set -a; . ./.env; set +a
    ```
+
+   The server and the auth helper both read `.env` from the working directory,
+   so nothing needs exporting into the shell. A real environment variable still
+   wins over the file where both are set.
 
 3. Authorize once. A browser opens; approve, and the refresh token lands in
    `.podio-token.json` (mode 0600, gitignored):
@@ -103,6 +106,9 @@ account-wide auth the aliases work with no tokens filled in at all.
 | `PODIO_APPS_FILE` | no | Path to a JSON app list, instead of `PODIO_APPS` |
 | `PODIO_REDIRECT_URI` | no | Default redirect URI for `podio_auth.py` |
 | `PODIO_API_BASE` | no | API base URL, default `https://api.podio.com` |
+
+Values come from the environment first and `.env` in the working directory
+second, so `claude` must be started from this directory.
 
 Podio rotates the refresh token every time it is redeemed, so the new value is
 written back to `PODIO_TOKEN_FILE` after each refresh. Setting

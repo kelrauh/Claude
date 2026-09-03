@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import httpx
 
-from podio_client import should_retry_as_form
+from podio_client import read_dotenv, should_retry_as_form
 
 AUTHORIZE_URL = "https://podio.com/oauth/authorize"
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]", "::1"})
@@ -263,12 +263,14 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=300, help="seconds to wait (default 300)")
     args = parser.parse_args()
 
-    client_id = os.environ.get("PODIO_CLIENT_ID", "").strip()
-    client_secret = os.environ.get("PODIO_CLIENT_SECRET", "").strip()
+    # Same precedence as the server: real environment first, then .env.
+    values = {**read_dotenv(Path(".env")), **{k: v for k, v in os.environ.items() if v}}
+    client_id = values.get("PODIO_CLIENT_ID", "").strip()
+    client_secret = values.get("PODIO_CLIENT_SECRET", "").strip()
     if not client_id or not client_secret:
         raise SystemExit(
-            "PODIO_CLIENT_ID and PODIO_CLIENT_SECRET must be set.\n"
-            "  set -a; . ./.env; set +a"
+            "PODIO_CLIENT_ID and PODIO_CLIENT_SECRET must be set, either in a .env file in "
+            "this directory or in the environment."
         )
 
     redirect_uri = args.redirect_uri or f"http://localhost:{args.port}{CALLBACK_PATH}"
